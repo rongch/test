@@ -1,0 +1,31 @@
+---
+
+- name: ensure apt cache is up to date
+  apt: update_cache=yes
+- name: ensure packages are installed
+  apt: name={{item}}
+  with_items:
+    - postgresql
+    - libpq-dev
+    - python-psycopg2
+  tags: postgresql_server
+
+- name: postgresql | Create sonar postgresql user
+  postgresql_user: 
+     name="{{sonar_jdbc_user}}"
+     password="{{sonar_jdbc_pass}}"
+  sudo_user: "{{ sonar_postgres_sudo_user }}"
+  notify: restart sonar
+  tags: postgresql_server
+
+- name: postgresql | Create sonar postgresql database
+  postgresql_db: 
+     name="{{sonar_jdbc_db}}"
+     owner="{{sonar_jdbc_user}}"
+     encoding='UTF-8'
+     lc_collate='en_US.UTF-8'
+     lc_ctype='en_US.UTF-8'
+     template='template0'
+  sudo_user: "{{ sonar_postgres_sudo_user }}"
+  notify: restart sonar
+  tags: postgresql_server

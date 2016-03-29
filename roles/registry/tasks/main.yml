@@ -1,0 +1,117 @@
+- meta: flush_handlers
+  tags: [registry]
+
+- name: directories are present
+  file:
+    dest: "{{ item }}"
+    state: directory
+  with_items: directories
+  when: registry_server is defined
+  tags: [registry]
+
+- name: files are present
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  with_items: registry_server_files
+  register: config_result
+  when: registry_server is defined
+  tags: [registry]
+
+- name: node directories are present
+  file:
+    dest: "{{ item }}"
+    state: directory
+  with_items: node_directories
+  when: not registry_server is defined
+  tags: [registry_clent]
+
+- name: node files are present
+  copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "{{ item.mode }}"
+  with_items: node_files
+  register: cert_copied
+  when: not registry_server is defined
+  tags: [registry_client]
+
+- name: Obsolete Docker init.d service is removed
+  file:
+    dest: /etc/init.d/docker
+    state: absent
+  tags: [registry]
+
+- name: add registry domain name to registry_server /etc/hosts file
+  lineinfile: dest=/etc/hosts line="127.0.0.1 www.my-registry.com"
+  when: registry_server is defined
+  tags: [registry]
+
+- name: add registry domain name to registry_client /etc/hosts file
+  lineinfile: dest=/etc/hosts line="{{ registry_server_ip }} www.my-registry.com"
+  when: not registry_server is defined
+  tags: [registry]
+
+#- name: Configuration is present
+#  copy:
+#    src: docker.cfg
+#    dest: /etc/default/docker
+#  register: config_result
+#  tags: [registry]
+
+- name: update-ca-certificate
+  shell: update-ca-certificates
+  register: cert_updated
+  tags: [registry]
+
+- name: Docker Service is restarted
+  service:
+    name=docker
+    state=restarted
+  when: cert_updated|changed
+  tags: [registry]
+
+- name: Docker-registry Service is restarted
+  service:
+    name=docker-registry
+    state=restarted
+  when: registry_server is defined
+  tags: [registry]
+
+
+#- name: Compose template is present
+  #template:
+    #src: "{{ container_name }}.yml.j2"
+    #dest: "{{ compose_config_dir }}/{{ alias }}{{ container_name }}/docker-compose.yml.ctmpl"
+  #register: result
+  #tags: [registry]
+
+
+#- name: Registry and Nginx container is running
+#  shell: docker-compose up 
+#  args:
+#    chdir: "/docker-registry"
+#  environment:
+#    DOCKER_HOST: tcp://0.0.0.0:2375
+#  register: result
+#  tags: [registry]
+
+
+#- name: nginx server template is present
+#  template:
+#    src: nginx-server.conf.j2
+#    dest: /data/nginx/servers/{{ nginx_conf_name }}.conf
+#  tags: [service]
+
+
+#- name: nginx Consul templates are applied
+#  shell: >
+#    consul-template \
+#      -consul localhost:8500 \
+#      -template "{{ item.ctmplDest }}:{{ item.dest }}:docker kill -s HUP nginx" \
+#      -once
+#  with_items: nginx_templates
+#  tags: [service]
+
+

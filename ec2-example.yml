@@ -1,0 +1,275 @@
+---
+- name: launch webservers
+  hosts: localhost
+  vars:
+    region: us-east-1
+    #instance_type: t2.micro  # for ubuntu
+    instance_type: t1.micro   # for centos
+    ubuntu_image_id: ami-fce3c696
+    centos65_image_id: ami-03014a66
+    node_count: 3
+    master_count: 1
+    registry_count: 1
+    nexus_count: 1
+    sonar_count: 1
+    nfs_count: 1
+  tasks:
+  #- name: ec2 keypair
+  #  ec2_key: name=mykey key_material="{{ item }}" region={{ region }}
+  #  with_file: ~/.ssh/id_rsa.pub
+  - name: web security group
+    ec2_group:
+      name: web
+      description: allow http and https access
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          from_port: 80
+          to_port: 80
+          cidr_ip: 0.0.0.0/0
+        - proto: tcp
+          from_port: 443
+          to_port: 443
+          cidr_ip: 0.0.0.0/0
+  - name: ssh security group
+    ec2_group:
+      name: ssh
+      description: allow ssh access
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+  - name: outbound security group
+    ec2_group:
+      name: outbound
+      description: allow outbound connections to the internet
+      region: "{{ region }}"
+      rules_egress:
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+  #- name: Get the ubuntu trusty AMI
+  #  ec2_ami_search: distro=ubuntu release=trusty virt=hvm region={{ region }}
+  #  register: ubuntu_image
+  - name: start the master instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      #instance_tags: { Name: ansiblebook, type: web, env: production }
+      instance_tags: { Name: jenkins_master, type: master, env: production }
+      exact_count: "{{ master_count }}"
+      count_tag: { type: master}
+      wait: yes
+    register: ec2_master
+  - name: add the instance to master and production groups
+    add_host: hostname={{ item.public_dns_name }} groups={{ item.tags.type }},{{ item.tags.env }}
+    with_items: ec2_master.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_master.tagged_instances
+    when: item.public_dns_name is defined
+
+  - name: start the build_node instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      #instance_tags: { Name: ansiblebook, type: web, env: production }
+      instance_tags: { Name: build_node, type: build_node, env: production }
+      exact_count: "{{ node_count }}"
+      count_tag: { type: build_node}
+      wait: yes
+    register: ec2_build_node
+  - name: add the instance to registry_client and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=build_node,production
+    with_items: ec2_build_node.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_build_node.tagged_instances
+    when: item.public_dns_name is defined
+
+  - name: start the registry instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      instance_tags: { Name: registry_server, type: registry, env: production }
+      exact_count: "{{ registry_count }}"
+      count_tag: { type: registry }
+      wait: yes
+    register: ec2_registry
+  - debug: var=ec2_registry.tagged_instances[0].tags.env
+  - debug: var=ec2_registry.tagged_instances[0].private_ip
+  - name: add the instance to web and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=registry,production
+    with_items: ec2_registry.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_registry.tagged_instances
+    when: item.public_dns_name is defined
+
+  - name: start the nfs-server instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      instance_tags: { Name: nfs_server, type: nfs_server, env: production }
+      exact_count: "{{ nfs_count }}"
+      count_tag: { type: nfs_server }
+      wait: yes
+    register: ec2_nfs_server
+  - name: add the instance to nfs-server and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=nfs_server,production
+    with_items: ec2_nfs_server.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for nfs-server ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_nfs_server.tagged_instances
+    when: item.public_dns_name is defined
+
+  - name: start the nexus3 instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      instance_tags: { Name: nexus3_server, type: nexus3, env: production }
+      exact_count: "{{ nexus_count }}"
+      count_tag: { type: nexus3 }
+      wait: yes
+    register: ec2_nexus3
+  - name: add the instance to web and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=nexus3,production
+    with_items: ec2_nexus3.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_nexus3.tagged_instances
+    when: item.public_dns_name is defined
+
+  - name: start the sonarqube instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image_id }}"
+      image: "{{ centos65_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      instance_tags: { Name: sonar_server, type: sonar, env: production }
+      exact_count: "{{ sonar_count }}"
+      count_tag: { type: sonar }
+      wait: yes
+    register: ec2_sonar
+  - name: add the instance to web and production groups
+    add_host: hostname={{ item.public_dns_name }} groups=sonar,production
+    with_items: ec2_sonar.tagged_instances
+    when: item.public_dns_name is defined
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: ec2_sonar.tagged_instances
+    when: item.public_dns_name is defined
+
+- name: configure nfs-server
+  hosts: nfs_server:&production
+  sudo: True
+  vars_files: 
+    - vars/mount
+  vars:
+    nfs_clients:
+      - "{{ hostvars['localhost']['ec2_master'].tagged_instances[0].private_ip }}"
+      - "{{ hostvars['localhost']['ec2_sonar'].tagged_instances[0].private_ip }}"
+  roles:
+    - nfs_server
+  tasks:
+  - debug: var=hostvars['localhost']['ec2_master'].tagged_instances[0].private_ip
+
+- name: configure master servers
+  hosts: master:&production
+  sudo: True
+  vars_files:
+    - vars/os
+    - vars/mount
+  vars:
+    swarm_master: true
+    consul_extra: -server -bootstrap-expect 1 -ui-dir /data/consul/ui
+    ip: "{{ hostvars[inventory_hostname].ansible_default_ipv4.address }}"
+    hostname: swarm_master
+    nfs_server: "{{ hostvars['localhost']['ec2_nfs_server'].tagged_instances[0].private_ip }}"
+  roles:
+    - docker
+    - swarm
+    - compose
+    - consul
+    - java
+    - jenkins
+    - nginx
+    - nfs_client
+
+- name: configure registry servers
+  hosts: registry:&production
+  sudo: True
+  vars:
+    registry_server: true
+  roles:
+    - docker
+    - compose
+    - registry
+
+- name: configure nexus3 servers
+  hosts: nexus3:&production
+  sudo: True
+  roles:
+    - oracle_java8
+    - nginx_proxy
+    - nexus2
+
+- name: configure sonar servers
+  hosts: sonar:&production
+  sudo: True
+  vars_files:
+    - vars/os
+    - vars/mount
+  vars:
+    nfs_server: "{{ hostvars['localhost']['ec2_nfs_server'].tagged_instances[0].private_ip }}"
+  roles:
+    - oracle_java8
+    - nginx_proxy
+    - sonar
+    - nfs_client
+
+- name: configure build node 
+  hosts: build_node:&production
+  sudo: True
+  vars:
+    registry_server_ip: "{{ hostvars['localhost']['ec2_registry'].tagged_instances[0].private_ip }}"
+    consul_master_ip: "{{ hostvars['localhost']['ec2_master'].tagged_instances[0].private_ip }}"
+    ip: "{{ hostvars[inventory_hostname].ansible_default_ipv4.address }}"
+    consul_extra: ""
+    hostname: "{{ hostvars[inventory_hostname].inventory_hostname_short }}"
+  tasks:
+  - debug: var=hostvars[inventory_hostname].ansible_default_ipv4.address
+  roles:
+    - docker
+    - consul
+    - swarm
+    - registry
+    - registry_client

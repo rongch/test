@@ -1,0 +1,6 @@
+- name: update docker images from registry server
+  hosts: build_node:&production
+  sudo: True
+  roles:
+    - registry_client
+

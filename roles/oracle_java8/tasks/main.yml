@@ -1,0 +1,27 @@
+- set_fact: alternatives_cmd="alternatives"
+  when: ansible_os_family=='RedHat'
+  tags: [jdk8]
+
+- set_fact: alternatives_cmd="update-alternatives"
+  when: ansible_os_family=='Debian'
+  tags: [jdk8]
+
+- name: Download Java
+  command: "wget -q -O {{ java_archive }} --no-check-certificate --no-cookies --header 'Cookie: oraclelicense=accept-securebackup-cookie' {{ download_url }} creates={{ java_archive }}"
+  tags: [jdk8]
+
+- name: Unpack archive
+  command: "tar -zxf {{ java_archive }} -C {{ download_folder }} creates={{ java_name }}"
+  tags: [jdk8]
+
+- name: Fix ownership
+  file: state=directory path={{ java_name }} owner=root group=root recurse=yes
+  tags: [jdk8]
+
+- name: Make Java available for system
+  command: '"{{ alternatives_cmd }}" --install "/usr/bin/java" "java" "{{ java_name }}/bin/java" 2000'
+  tags: [jdk8]
+
+- name: Clean up
+  file: state=absent path={{ java_archive }}
+  tags: [jdk8]

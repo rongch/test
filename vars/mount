@@ -1,0 +1,2 @@
+nfs_server_mount: /opt
+nfs_client_mount_point: /mnt/jenkins

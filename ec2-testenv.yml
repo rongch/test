@@ -1,0 +1,195 @@
+---
+- name: launch webservers
+  hosts: localhost
+  vars:
+    region: us-east-1
+    instance_type: t2.micro
+    ubuntu_image_id: ami-fce3c696
+    node_count: 2
+    master_count: 1
+    registry_count: 1
+  tasks:
+  #- name: ec2 keypair
+  #  ec2_key: name=mykey key_material="{{ item }}" region={{ region }}
+  #  with_file: ~/.ssh/id_rsa.pub
+  - name: web security group
+    ec2_group:
+      name: web
+      description: allow http and https access
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          from_port: 80
+          to_port: 80
+          cidr_ip: 0.0.0.0/0
+        - proto: tcp
+          from_port: 443
+          to_port: 443
+          cidr_ip: 0.0.0.0/0
+  - name: ssh security group
+    ec2_group:
+      name: ssh
+      description: allow ssh access
+      region: "{{ region }}"
+      rules:
+        - proto: tcp
+          from_port: 22
+          to_port: 22
+          cidr_ip: 0.0.0.0/0
+  - name: outbound security group
+    ec2_group:
+      name: outbound
+      description: allow outbound connections to the internet
+      region: "{{ region }}"
+      rules_egress:
+        - proto: all
+          cidr_ip: 0.0.0.0/0
+  #- name: Get the ubuntu trusty AMI
+  #  ec2_ami_search: distro=ubuntu release=trusty virt=hvm region={{ region }}
+  #  register: ubuntu_image
+  - name: start the master instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image.ami }}"
+      image: "{{ ubuntu_image_id }}"
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      #instance_tags: { Name: ansiblebook, type: web, env: production }
+      instance_tags: { Name: jenkins_master, type: master, env: production }
+      exact_count: "{{ master_count }}"
+      count_tag: { type: master}
+      wait: yes
+    #async: 100
+    #poll: 0
+    register: ec2_master
+  - debug: var=ec2_master
+
+#  - name: add the instance to master and production groups
+#    add_host: hostname={{ item.public_dns_name }} groups=master,production
+#    with_items: ec2_master.tagged_instances
+#    when: item.public_dns_name is defined
+
+  - name: start the build_node instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image.ami }}"
+      image: ami-fce3c696
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      #instance_tags: { Name: ansiblebook, type: web, env: production }
+      instance_tags: { Name: build_node, type: build_node, env: production }
+      exact_count: "{{ node_count }}"
+      count_tag: { type: build_node}
+      wait: yes
+    async: 120
+    poll: 0
+    register: ec2_build_node
+  - debug: var=ec2_build_node
+#  - name: add the instance to registry_client and production groups
+#    add_host: hostname={{ item.public_dns_name }} groups=build_node,production
+#    with_items: ec2_build_node.tagged_instances
+#    when: item.public_dns_name is defined
+
+  - name: display results_file
+    include_vars: "{{ ec2_build_node.results_file }}"
+    register: node_results
+  - debug: msg="{{ invocation }}"
+
+  - name: start the registry instances
+    ec2:
+      region: "{{ region }}"
+      #image: "{{ ubuntu_image.ami }}"
+      image: ami-fce3c696
+      instance_type: "{{ instance_type }}"
+      key_name: rchen
+      #group: [web, ssh, outbound]
+      instance_tags: { Name: registry_server, type: registry, env: production }
+      exact_count: "{{ registry_count }}"
+      count_tag: { type: registry }
+      wait: yes
+    async: 100
+    poll: 0
+    register: ec2_registry
+  - debug: var=ec2_registry
+
+  - name: display results_file
+    shell: "cat {{ ec2_registry.results_file }}"
+    register: registry_results
+  - debug: var={{ registry_results.stdout_lines }}
+
+  - name: Wait for instance creation to complete
+    async_status: jid={{ item.ansible_job_id }}
+    register: ec2_jobs
+    until: ec2_jobs.finished
+    retries: 300
+    with_items: 
+#      - "{{ ec2_master }}"
+      - "{{ ec2_registry }}"
+      - "{{ ec2_build_node }}"
+
+  - debug: var=ec2_registry.tagged_instances[0].public_ip
+  - debug: var=ec2_registry.tagged_instances[0].private_ip
+  - debug: var=ec2_registry.tagged_instances[0]
+  - name: add the instance to web and production groups
+    add_host: hostname={{ item.public_dns_name }} groups={{ item.tags.type }},{{ item.tags.env }}
+    with_items: 
+      - "{{ ec2_master.tagged_instances }}"
+      - "{{ ec2_build_node.tagged_instances }}"
+      - "{{ ec2_registry.tagged_instances }}"
+    when: item.public_dns_name is defined
+
+  - name: wait for ssh server to be running
+    wait_for: host={{ item.public_dns_name }} port=22 search_regex=OpenSSH
+    with_items: 
+      - "{{ ec2_registry.tagged_instances }}"
+      - "{{ ec2_master.tagged_instances }}"
+      - "{{ ec2_build_node.tagged_instances }}"
+    when: item.public_dns_name is defined
+
+
+#- name: configure master servers
+#  hosts: master:&production
+#  sudo: True
+#  vars:
+#    swarm_master: true
+#    consul_extra: -server -bootstrap-expect 1 -ui-dir /data/consul/ui
+#    ip: "{{ hostvars[inventory_hostname].ansible_default_ipv4.address }}"
+#    hostname: swarm_master
+#  roles:
+#    - docker
+#    - swarm
+#    - compose
+#    - consul
+#    - java
+#    - jenkins
+#    - nginx
+#
+#- name: configure registry servers
+#  hosts: registry:&production
+#  sudo: True
+#  vars:
+#    registry_server: true
+#  roles:
+#    - docker
+#    - compose
+#    - registry
+#
+#- name: configure build node 
+#  hosts: build_node:&production
+#  sudo: True
+#  vars:
+#    registry_server_ip: "{{ hostvars['localhost']['ec2_registry'].tagged_instances[0].private_ip }}"
+#    consul_master_ip: "{{ hostvars['localhost']['ec2_master'].tagged_instances[0].private_ip }}"
+#    ip: "{{ hostvars[inventory_hostname].ansible_default_ipv4.address }}"
+#    consul_extra: ""
+#    hostname: "{{ hostvars[inventory_hostname].inventory_hostname_short }}"
+#  tasks:
+#  - debug: var=hostvars[inventory_hostname].ansible_default_ipv4.address
+#  roles:
+#    - docker
+#    - consul
+#    - swarm
+#    - registry
+##    - registry_client

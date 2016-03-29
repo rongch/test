@@ -1,0 +1,20 @@
+- name: Download nexus3
+  command: "wget -q -O {{ archive }} --continue --no-check-certificate --no-cookies {{ url }} creates={{archive}}"
+  tags: [nexus3]
+
+- name: Unpack nexus3
+  command: "tar -zxf {{ archive }} -C {{ download_folder }} creates={{nexus_name}}"
+  tags: [nexus3]
+
+- name: Clean up
+  file: state=absent path={{ archive }}
+  tags: [nexus3]
+
+- name: rename Nexus folder
+  shell: "ln -fs `ls -d {{ download_folder }}/nexus-*|tail -1` {{ download_folder }}/nexus"
+  #command: mv "{{ download_folder }}/nexus-*/" "{{ download_folder }}/nexus/"
+  tags: [nexus3]
+
+- name: Start Nexus
+  command: "{{ download_folder }}/nexus/bin/nexus start"
+  tags: [nexus3]
